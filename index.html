@@ -56,6 +56,10 @@
     background-image:linear-gradient(45deg,transparent 50%,var(--ink-dim) 50%),linear-gradient(135deg,var(--ink-dim) 50%,transparent 50%);
     background-position:calc(100% - 22px) 26px,calc(100% - 16px) 26px;background-size:6px 6px;background-repeat:no-repeat;background-color:var(--chip)}
   .sel option{background:var(--bar);color:var(--ink)}
+  /* 난이도는 앱 안의 버튼으로 고른다 — 기기 기본 선택 창(select)은 돌린 화면을 따라 돌지 않아 세로로 크게 뜬다 */
+  .seg{display:flex;align-items:center;gap:6px}
+  .seg .btn{flex:1 1 0;min-width:0;min-height:58px;padding:0 4px;font-size:18px}
+  .seg .btn[aria-pressed="true"]{background:var(--brass);color:var(--brass-ink);border-color:transparent;font-weight:700}
   .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
   .stage{position:absolute;inset:0}
   #board{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
@@ -125,11 +129,11 @@
               <button id="albumClear" class="btn" type="button">묶음 비우기</button>
             </div>
           </div>
-          <select id="level" class="sel wide" aria-label="난이도">
-            <option value="1">쉬움 · 5개</option>
-            <option value="2">보통 · 7개</option>
-            <option value="3">어려움 · 10개</option>
-          </select>
+          <div id="level" class="seg wide" role="group" aria-label="난이도">
+            <button class="btn" type="button" data-v="1" aria-pressed="true">쉬움 5개</button>
+            <button class="btn" type="button" data-v="2" aria-pressed="false">보통 7개</button>
+            <button class="btn" type="button" data-v="3" aria-pressed="false">어려움 10개</button>
+          </div>
           <button id="again" class="btn" type="button">새로 숨기기</button>
           <button id="sound" class="btn" type="button" aria-pressed="true">소리</button>
           <button id="full" class="btn wide" type="button">전체 화면</button>
@@ -295,7 +299,8 @@
     build(img, level, sample, dataURL, null);
     $('#menu').hidden = true;
   }
-  const level = () => +$('#level').value;
+  const level = () => { const b = $('#level [aria-pressed="true"]'); return b ? +b.dataset.v : 1; };
+  function syncLevel(v){ for (const b of $('#level').querySelectorAll('[data-v]')) b.setAttribute('aria-pressed', +b.dataset.v === v ? 'true' : 'false'); }
   const foundN = () => G.objs.filter(o => o.f).length;
 
   function finish(){
@@ -494,7 +499,7 @@
     let st = null;
     try { st = JSON.parse(store.get(KEY) || 'null'); } catch(e){}
     const ok = st && st.v === 1 && LEVELS[st.level] && Array.isArray(st.objs) && st.objs.length && st.objs.every(o => SHAPES[o.t]);
-    if (ok) $('#level').value = String(st.level);
+    if (ok) syncLevel(st.level);
     if (ok && st.sample){ build(sampleImage(), st.level, true, null, st); return; }
     if (ok && st.img){
       const im = new Image();
@@ -718,7 +723,7 @@
     $('#pc').textContent = `${foundN()}/${G.objs.length}`;
   }
   function syncUI(){
-    $('#level').value = String(G.level);
+    syncLevel(G.level);
     $('#done').hidden = !(G.done && showDone);
     $('#dTm').textContent = fmt(G.elapsed);
     $('#dPc').textContent = `${G.objs.length}개`;
@@ -764,7 +769,12 @@
     clearTimeout(clrT); clr.dataset.armed = '0'; clr.textContent = '묶음 비우기';
     clearAlbum();
   });
-  $('#level').addEventListener('change', e => { if (G) newGame(G.base, +e.target.value, G.sample, G.dataURL); });
+  $('#level').addEventListener('click', e => {
+    const b = e.target.closest('[data-v]');
+    if (!b || !G || +b.dataset.v === G.level) return;
+    syncLevel(+b.dataset.v);
+    newGame(G.base, +b.dataset.v, G.sample, G.dataURL);
+  });
   $('#sound').addEventListener('click', e => { soundOn = !soundOn; toggle(e.currentTarget, soundOn); if (soundOn){ wakeAudio(); beep(660, .08); } });
   const again = $('#again');
   let armT = 0;
