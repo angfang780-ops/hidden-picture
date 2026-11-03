@@ -67,6 +67,10 @@
     position:absolute;right:12px;top:12px;min-height:54px;padding:0 22px;font-size:20px;font-weight:700;
     background:var(--brass);color:var(--brass-ink);border-color:transparent;box-shadow:0 4px 14px rgba(0,0,0,.45)
   }
+  .hint{
+    position:absolute;right:12px;bottom:12px;min-height:64px;padding:0 26px;font-size:22px;font-weight:700;
+    background:var(--brass);color:var(--brass-ink);border-color:transparent;box-shadow:0 4px 14px rgba(0,0,0,.45)
+  }
   /* 왼쪽 「찾을 그림」 목록 — 누르면 그 그림이 있는 쪽을 알려 준다 */
   .list{
     position:absolute;left:0;top:0;bottom:0;display:flex;flex-direction:column;justify-content:center;gap:8px;
@@ -112,6 +116,7 @@
     <canvas id="board" role="img" aria-label="숨은그림 판"></canvas>
     <nav class="list" id="list" aria-label="찾을 그림"></nav>
     <button id="gear" class="btn gear" type="button">설정</button>
+    <button id="hint" class="btn hint" type="button">힌트</button>
     <div class="toast" id="toast" hidden></div>
 
     <div class="veil" id="menu" hidden>
@@ -138,7 +143,7 @@
           <button id="sound" class="btn" type="button" aria-pressed="true">소리</button>
           <button id="full" class="btn wide" type="button">전체 화면</button>
         </div>
-        <p class="note" id="stat">시간 <b id="tm">0:00</b> · 찾은 그림 <b id="pc">0/0</b> · 왼쪽 그림을 누르면 있는 곳을 알려 줘요</p>
+        <p class="note" id="stat">시간 <b id="tm">0:00</b> · 찾은 그림 <b id="pc">0/0</b> · 「힌트」나 왼쪽 그림을 누르면 있는 곳을 알려 줘요 (여러 번 누를수록 더 정확히)</p>
         <button id="menuClose" class="btn primary" type="button">닫고 찾기</button>
       </div>
     </div>
@@ -353,11 +358,31 @@
     wakeAudio();
     const o = G.objs[+b.dataset.i];
     if (o.f){ o.ft = performance.now(); dirty = true; return; }
-    // 정확한 자리 대신 그 근처를 큰 동그라미로 알려 준다
-    const a = rnd(0, Math.PI*2), d = rnd(0, o.s*.7);
-    fx.push({ kind: 'hint', x: o.x + d*Math.cos(a), y: o.y + d*Math.sin(a), r: o.s*1.7, t0: performance.now(), dur: 2400 });
-    beep(440, .08);
+    hintFor(o);
+  });
+  // 힌트: 같은 그림을 누를 때마다 더 정확히 — ① 근처 큰 동그라미 ② 작은 동그라미 ③ 그림 테두리를 반짝
+  const HINT_MS = 5000;
+  let hintObj = null;
+  function hintFor(o){
+    hintObj = o;
+    o.h = (o.h || 0) + 1;
+    fx = fx.filter(f => f.kind === 'miss');
+    const now = performance.now();
+    if (o.h >= 3){
+      fx.push({ kind: 'shape', o, t0: now, dur: HINT_MS });
+    } else {
+      const a = rnd(0, Math.PI*2), d = rnd(0, o.s*(o.h === 1 ? .7 : .25));
+      fx.push({ kind: 'hint', x: o.x + d*Math.cos(a), y: o.y + d*Math.sin(a), r: o.s*(o.h === 1 ? 1.7 : .95), t0: now, dur: HINT_MS });
+    }
+    beep(o.h >= 3 ? 660 : 440, .08);
     dirty = true;
+  }
+  $('#hint').addEventListener('click', () => {
+    if (!G || G.done) return;
+    wakeAudio();
+    // 아까 힌트 준 그림을 아직 못 찾았으면 그 그림을 더 정확히, 아니면 못 찾은 다음 그림
+    const o = hintObj && G.objs.includes(hintObj) && !hintObj.f ? hintObj : G.objs.find(x => !x.f);
+    if (o) hintFor(o);
   });
 
   // ---------- rendering ----------
@@ -413,9 +438,19 @@
     fx = fx.filter(f => now - f.t0 < f.dur);
     for (const f of fx){
       const t = (now - f.t0)/f.dur;
-      ctx.globalAlpha = 1 - t;
+      // 힌트는 끝 무렵에만 흐려진다
+      ctx.globalAlpha = f.kind === 'miss' ? 1 - t : Math.min(1, (1 - t)/.3);
       if (f.kind === 'miss') ring(OX + f.x*S, OY + f.y*S, 10 + 26*t, 'rgba(236,229,211,.9)', 3);
-      else ring(OX + f.x*S, OY + f.y*S, f.r*S*(1 + .06*Math.sin(t*Math.PI*6)), '#D8A445', 5, [14, 10]);
+      else if (f.kind === 'shape'){
+        const o = f.o, k = o.s*S/100, on = .55 + .45*Math.sin(t*Math.PI*10);
+        ctx.save();
+        ctx.translate(OX + o.x*S, OY + o.y*S); ctx.rotate(o.r); ctx.scale(k, k); ctx.translate(-50, -50);
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 9/k; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.stroke(PATHS[o.t]);
+        ctx.lineWidth = 5/k; ctx.strokeStyle = `rgba(255,214,110,${on})`; ctx.stroke(PATHS[o.t]);
+        ctx.restore();
+      }
+      else ring(OX + f.x*S, OY + f.y*S, f.r*S*(1 + .06*Math.sin(t*Math.PI*6)), '#FFD66E', 7, [16, 10]);
       ctx.globalAlpha = 1;
     }
     ctx.restore();
@@ -725,6 +760,7 @@
   function syncUI(){
     syncLevel(G.level);
     $('#done').hidden = !(G.done && showDone);
+    $('#hint').hidden = G.done;
     $('#dTm').textContent = fmt(G.elapsed);
     $('#dPc').textContent = `${G.objs.length}개`;
     syncList(); syncStats(); dirty = true;
