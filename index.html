@@ -307,10 +307,17 @@
     G.done = true; G.started = false; showDone = false;
     [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, .18), i*110));
     syncUI();
-    // 다 찾은 사진을 먼저 보여 주고, 몇 초 뒤에 완성 창을 띄운다 (사진 묶음이면 조금 더 길게)
+    // 다 찾은 사진을 몇 초 보여 준 뒤 완성 창 없이 바로 다음 게임 (묶음이면 다른 사진, 한 장이면 같은 사진 새로)
     const cur = G;
-    setTimeout(() => { if (G === cur) openDone(); }, (album.length ? DONE_DELAY_ALBUM : DONE_DELAY)*1000);
+    waiting = true;
+    setTimeout(() => {
+      if (G !== cur) return;
+      waiting = false;
+      if (!$('#menu').hidden) openDone(); // 설정 창을 보고 있으면 넘기지 않고 완성 창만
+      else if (album.length) nextPhoto(); else newGame(G.base, G.level, G.sample, G.dataURL);
+    }, (album.length ? DONE_DELAY_ALBUM : DONE_DELAY)*1000);
   }
+  let waiting = false;
   function openDone(){
     if (!G || !G.done || showDone) return;
     showDone = true; syncUI();
@@ -434,7 +441,7 @@
   cv.addEventListener('pointerdown', e => {
     if (!G) return;
     // 다 찾은 사진을 보는 중에 화면을 누르면 완성 창을 다시 띄운다
-    if (G.done){ if (!showDone && !nexting) openDone(); return; }
+    if (G.done){ if (!showDone && !nexting && !waiting) openDone(); return; }
     wakeAudio(); wake();
     const { wx, wy } = toWorld(e);
     if (wx < 0 || wy < 0 || wx > G.base.width || wy > G.base.height) return;
