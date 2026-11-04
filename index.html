@@ -124,7 +124,11 @@
         <h3>설정</h3>
         <div class="grid2">
           <input id="file" class="vh" type="file" accept="image/*">
-          <label for="file" class="btn primary wide">사진 한 장 고르기</label>
+          <div id="mode" class="seg wide" role="group" aria-label="무엇으로 할까요">
+            <button class="btn" type="button" data-v="art" aria-pressed="true">동화 그림</button>
+            <button class="btn" type="button" data-v="photo" aria-pressed="false">내 사진</button>
+          </div>
+          <label for="file" class="btn wide">사진 한 장 고르기</label>
           <input id="dir" class="vh" type="file" webkitdirectory multiple>
           <label for="dir" class="btn wide" id="dirLbl">폴더 고르기</label>
           <div class="album wide" id="album" hidden>
@@ -169,7 +173,8 @@
   const cv = $('#board'), ctx = cv.getContext('2d');
   const stage = $('#stage'), list = $('#list');
   const turned = matchMedia('(orientation: portrait)');
-  const KEY = 'hidden.v1';
+  const KEY = 'hidden.v1', MODE = 'hidden.mode';
+  let mode = 'art'; // 'art' 동화 그림(기본) / 'photo' 내 사진 — boot에서 저장값을 읽는다
   const DONE_DELAY = 1, DONE_DELAY_ALBUM = 1; // 다 찾은 뒤 완성 창이 뜨기까지 초 (사진 한 장 / 폴더 묶음) — 사용자 요청으로 바로 뜨게 줄임
   // 난이도: 숨길 개수, 크기(사진 짧은 변 대비), 테두리 진하기, 밝기 차이
   const LEVELS = {
@@ -285,10 +290,326 @@
     return c;
   }
 
+  // ---------- 동화 그림 장면 (틀린 그림 찾기 앱과 같은 그림 도구) ----------
+  // 집·나무·해·구름·새·꽃 같은 물건을 하나하나 그려 장면을 만든다
+  const AW = 1400, AH = 1000, INK = '#3A2E2A', BIG = 1.35; // BIG: 태블릿에서 물건이 잘 보이게 키우는 비율
+  const PAL = {
+    roof: ['#C9472F', '#2F6FB3', '#7B4FA0', '#2E8B57', '#D9822B'],
+    wall: ['#F4E3C3', '#FBF3E4', '#E9D3B0', '#F2D7D5'],
+    door: ['#7A4A2A', '#3D6FB6', '#2E8B57', '#C9472F'],
+    leaf: ['#4E9A3E', '#2F7D32', '#7CB342', '#3E8E5E'],
+    bright: ['#E53935', '#FB8C00', '#FDD835', '#8E44AD', '#1E88E5', '#F06292', '#43A047'],
+    fish: ['#FB8C00', '#E53935', '#FDD835', '#29B6F6', '#AB47BC']
+  };
+  const pickA = a => a[Math.floor(Math.random()*a.length)];
+  const otherOf = (a, v) => pickA(a.filter(x => x !== v));
+  // 물건 크기 (가로, 세로) — s는 물건의 기준 크기(px)
+  const BOX = { house: [1, 1.05], barn: [1.2, 1.05], tree: [.8, 1.1], pine: [.6, 1.1], sun: [1, 1], moon: [.9, .9], cloud: [1.6, .7],
+    bird: [.7, .4], flower: [.4, .8], butterfly: [.6, .5], boat: [1.3, 1], fish: [.8, .45], umbrella: [.9, 1], star: [.5, .5],
+    balloon: [.45, 1.1], mushroom: [.55, .5], chicken: [.7, .65], fence: [1.4, .45], kite: [.6, 1.2], bench: [1, .5], starfish: [.5, .5] };
+  const FLIPPY = ['bird', 'boat', 'fish', 'chicken'];
+  const SMALL_ADD = { village: ['flower', 'bird', 'butterfly', 'mushroom'], beach: ['fish', 'bird', 'starfish'], night: ['star', 'star'],
+    farm: ['chicken', 'flower', 'bird'], park: ['balloon', 'flower', 'butterfly', 'bird'] };
+  // 장면: 하늘색, 바닥 띠, 물건 종류별 (개수, 놓일 높이 범위, 크기 범위)
+  const THEMES = {
+    village: { name: '마을', sky: ['#7DB9E8', '#CFE8F7'], bands: [[.62, '#8CC665'], [.8, '#76B04F']], hills: '#6FA85A',
+      items: [['sun', [1, 1], [.06, .18], [.13, .15]], ['cloud', [2, 3], [.05, .3], [.11, .14]], ['bird', [2, 3], [.1, .4], [.06, .08]],
+        ['house', [2, 3], [.5, .66], [.2, .25]], ['tree', [2, 3], [.5, .66], [.22, .27]], ['fence', [1, 1], [.7, .78], [.16, .18]],
+        ['flower', [4, 6], [.76, .95], [.09, .11]], ['butterfly', [1, 2], [.6, .85], [.06, .08]], ['mushroom', [1, 2], [.82, .95], [.07, .09]]] },
+    beach: { name: '바닷가', sky: ['#8FD3F4', '#E0F4FB'], bands: [[.42, '#2E86C1'], [.58, '#3FA0D8'], [.72, '#F3D9A4']],
+      items: [['sun', [1, 1], [.06, .18], [.13, .15]], ['cloud', [2, 3], [.05, .26], [.11, .14]], ['bird', [2, 3], [.08, .3], [.06, .08]],
+        ['boat', [2, 3], [.36, .48], [.15, .19]], ['fish', [3, 4], [.56, .7], [.07, .09]],
+        ['umbrella', [1, 2], [.76, .88], [.2, .23]], ['starfish', [2, 3], [.85, .96], [.06, .08]]] },
+    night: { name: '밤 마을', sky: ['#1B2A4E', '#3B4F7A'], bands: [[.66, '#2F4A3A'], [.82, '#26402F']], hills: '#2B4636',
+      items: [['moon', [1, 1], [.08, .2], [.14, .16]], ['star', [8, 10], [.04, .4], [.04, .06]], ['cloud', [1, 1], [.1, .3], [.1, .12]],
+        ['house', [3, 3], [.55, .7], [.2, .24]], ['pine', [2, 3], [.55, .7], [.22, .27]], ['fence', [1, 1], [.75, .82], [.15, .17]],
+        ['mushroom', [1, 2], [.85, .96], [.07, .09]]] },
+    farm: { name: '농장', sky: ['#86C5EA', '#D8EEF8'], bands: [[.6, '#9CCB6B'], [.8, '#86B85A']], hills: '#7FB15F',
+      items: [['sun', [1, 1], [.06, .18], [.13, .15]], ['cloud', [2, 2], [.05, .28], [.11, .14]], ['bird', [1, 2], [.08, .35], [.06, .08]],
+        ['barn', [1, 1], [.48, .62], [.27, .3]], ['tree', [2, 3], [.5, .62], [.22, .26]], ['fence', [1, 2], [.68, .76], [.16, .18]],
+        ['chicken', [3, 4], [.78, .95], [.09, .11]], ['flower', [3, 4], [.8, .96], [.08, .1]], ['kite', [1, 1], [.15, .4], [.12, .14]]] },
+    park: { name: '공원', sky: ['#9AD0F0', '#E3F3FC'], bands: [[.6, '#90CF6E'], [.82, '#7DBF5C']],
+      items: [['sun', [1, 1], [.06, .18], [.12, .14]], ['cloud', [2, 2], [.05, .25], [.11, .13]], ['kite', [1, 2], [.12, .38], [.12, .14]],
+        ['balloon', [2, 3], [.25, .5], [.1, .12]], ['tree', [2, 3], [.5, .64], [.24, .27]], ['bench', [1, 1], [.68, .76], [.15, .17]],
+        ['flower', [4, 6], [.78, .96], [.09, .11]], ['butterfly', [2, 3], [.6, .85], [.06, .08]], ['bird', [1, 2], [.1, .4], [.06, .08]]] }
+  };
+  function colorFor(t){
+    if (t === 'house') return { c: pickA(PAL.roof), c2: pickA(PAL.door), c3: pickA(PAL.wall), n: 1 + Math.floor(Math.random()*3) };
+    if (t === 'barn') return { c: '#B83A2E', c2: '#F5EBD6', n: 1 };
+    if (t === 'tree') return { c: pickA(PAL.leaf), n: Math.random() < .5 ? 0 : 3 + Math.floor(Math.random()*3) };
+    if (t === 'pine') return { c: pickA(['#1F5A3A', '#2E6B45', '#24503A']) };
+    if (t === 'fish') return { c: pickA(PAL.fish) };
+    if (t === 'boat') return { c: pickA(['#C9472F', '#2F6FB3', '#F4E3C3', '#2E8B57']), c2: pickA(['#FFFFFF', '#FDD835', '#F06292']) };
+    if (t === 'fence') return { c: '#C8955A', n: 5 + Math.floor(Math.random()*2) };
+    if (t === 'chicken') return { c: pickA(['#FFFFFF', '#E9B872', '#C77B3B']) };
+    if (t === 'mushroom') return { c: pickA(['#E53935', '#8D6E63', '#FB8C00']) };
+    if (t === 'bird') return { c: pickA(['#3A2E2A', '#E53935', '#1E88E5', '#FDD835']) };
+    if (['flower', 'butterfly', 'balloon', 'kite', 'umbrella'].includes(t)) return { c: pickA(PAL.bright), c2: pickA(PAL.bright) };
+    if (t === 'starfish') return { c: pickA(['#FB8C00', '#F06292', '#E53935']) };
+    return { c: null };
+  }
+  const objBox = o => { const b = BOX[o.t]; return [b[0]*o.s, b[1]*o.s]; };
+  function overlap(a, b, pad){
+    const [aw, ah] = objBox(a), [bw, bh] = objBox(b);
+    return Math.abs(a.x - b.x) < (aw + bw)/2 + pad && Math.abs(a.y - b.y) < (ah + bh)/2 + pad;
+  }
+  function makeScene(){
+    const theme = pickA(Object.keys(THEMES)), T = THEMES[theme], objs = [];
+    for (const [t, cnt, zone, size] of T.items){
+      const n = cnt[0] + Math.floor(Math.random()*(cnt[1] - cnt[0] + 1));
+      for (let i = 0; i < n; i++){
+        for (let tries = 0; tries < 60; tries++){
+          const s = AH*BIG*(size[0] + Math.random()*(size[1] - size[0]));
+          const [w, h] = [BOX[t][0]*s, BOX[t][1]*s];
+          const o = { t, s: Math.round(s), x: Math.round(w/2 + 20 + Math.random()*(AW - w - 40)), y: Math.round(AH*(zone[0] + Math.random()*(zone[1] - zone[0]))), f: Math.random() < .5 ? 1 : 0, ...colorFor(t) };
+          if (o.y + h/2 > AH - 6 || o.y - h/2 < 6) continue;
+          if (objs.some(q => overlap(o, q, 14))) continue;
+          objs.push(o); break;
+        }
+      }
+    }
+    return { theme, objs };
+  }
+  // ---------- 물건 그리기 ----------
+  function outline(g, w){ g.lineWidth = w; g.strokeStyle = INK; g.lineJoin = 'round'; g.lineCap = 'round'; g.stroke(); }
+  function drawObj(g, o){
+    if (o.hide) return;
+    const s = o.s, lw = Math.max(3, s*.035);
+    g.save(); g.translate(o.x, o.y); if (o.f) g.scale(-1, 1);
+    const P = (pts) => { g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(x*s, y*s) : g.moveTo(x*s, y*s)); g.closePath(); };
+    const E = (x, y, rx, ry) => { g.beginPath(); g.ellipse(x*s, y*s, rx*s, ry*s, 0, 0, Math.PI*2); };
+    switch (o.t){
+      case 'house': {
+        g.fillStyle = o.c3 || '#F4E3C3'; g.beginPath(); g.rect(-.4*s, -.1*s, .8*s, .62*s); g.fill(); outline(g, lw);
+        g.fillStyle = o.c; P([[-.52, -.08], [0, -.52], [.52, -.08]]); g.fill(); outline(g, lw);
+        g.fillStyle = o.c2; g.beginPath(); g.rect(-.09*s, .2*s, .18*s, .32*s); g.fill(); outline(g, lw*.8);
+        const wx = o.n === 1 ? [.24] : o.n === 2 ? [-.25, .25] : [-.27, .25, .25];
+        const wy = o.n === 3 ? [.05, .05, .27] : wx.map(() => .05);
+        wx.forEach((x, k) => { g.fillStyle = THEMES.night && o.night ? '#FDD835' : '#9ED3F0'; g.beginPath(); g.rect((x - .08)*s, wy[k]*s, .16*s, .14*s); g.fill(); outline(g, lw*.7); });
+        break;
+      }
+      case 'barn': {
+        g.fillStyle = o.c; g.beginPath(); g.rect(-.5*s, -.15*s, s, .67*s); g.fill(); outline(g, lw);
+        g.fillStyle = '#8E2B22'; P([[-.58, -.13], [-.3, -.5], [.3, -.5], [.58, -.13]]); g.fill(); outline(g, lw);
+        g.fillStyle = o.c2; g.beginPath(); g.rect(-.17*s, .12*s, .34*s, .4*s); g.fill(); outline(g, lw*.8);
+        g.beginPath(); g.moveTo(-.17*s, .12*s); g.lineTo(.17*s, .52*s); g.moveTo(.17*s, .12*s); g.lineTo(-.17*s, .52*s); outline(g, lw*.6);
+        break;
+      }
+      case 'tree': {
+        g.fillStyle = '#8B5A2B'; g.beginPath(); g.rect(-.06*s, .1*s, .12*s, .45*s); g.fill(); outline(g, lw);
+        g.fillStyle = o.c; g.beginPath();
+        for (const [x, y, r] of [[0, -.18, .3], [-.22, 0, .22], [.22, 0, .22], [0, .08, .24]]) { g.moveTo((x + r)*s, y*s); g.arc(x*s, y*s, r*s, 0, Math.PI*2); }
+        outline(g, lw*2); g.fill();
+        g.fillStyle = '#E53935';
+        [[-.15, -.2], [.12, -.28], [.2, .02], [-.2, .06], [0, -.05]].slice(0, o.n || 0).forEach(([x, y]) => { g.beginPath(); g.arc(x*s, y*s, .045*s, 0, Math.PI*2); g.fill(); outline(g, lw*.5); });
+        break;
+      }
+      case 'pine': {
+        g.fillStyle = '#6B4423'; g.beginPath(); g.rect(-.05*s, .38*s, .1*s, .17*s); g.fill(); outline(g, lw);
+        g.fillStyle = o.c;
+        for (const [y0, w] of [[.42, .3], [.18, .25], [-.06, .19]]){ P([[-w, y0], [0, y0 - .32], [w, y0]]); g.fill(); outline(g, lw); }
+        break;
+      }
+      case 'sun': {
+        g.strokeStyle = '#F4A300'; g.lineWidth = lw*1.6; g.lineCap = 'round';
+        for (let k = 0; k < 10; k++){ const a = k*Math.PI/5; g.beginPath(); g.moveTo(Math.cos(a)*.34*s, Math.sin(a)*.34*s); g.lineTo(Math.cos(a)*.48*s, Math.sin(a)*.48*s); g.stroke(); }
+        g.fillStyle = '#FDD835'; E(0, 0, .28, .28); g.fill(); outline(g, lw);
+        break;
+      }
+      case 'moon': {
+        g.fillStyle = '#FFF3B0'; g.beginPath(); g.arc(0, 0, .42*s, 0, Math.PI*2); g.arc(.2*s, -.1*s, .36*s, 0, Math.PI*2, true); g.fill('evenodd'); outline(g, lw*.8);
+        break;
+      }
+      case 'cloud': {
+        g.fillStyle = '#FFFFFF'; g.beginPath();
+        for (const [x, y, r] of [[-.45, .08, .22], [-.15, -.08, .3], [.2, -.05, .28], [.5, .1, .2], [0, .12, .25]]) { g.moveTo((x + r)*s, y*s); g.arc(x*s, y*s, r*s, 0, Math.PI*2); }
+        // 테두리를 먼저 굵게 그리고 그 위를 채워서 바깥 테두리만 남긴다
+        g.globalAlpha = .35; outline(g, lw*1.4); g.globalAlpha = 1; g.fill();
+        break;
+      }
+      case 'bird': {
+        g.fillStyle = o.c; E(0, 0, .26, .15); g.fill(); outline(g, lw*.8);
+        E(.24, -.07, .1, .09); g.fill(); outline(g, lw*.8);
+        g.fillStyle = '#FB8C00'; P([[.33, -.08], [.42, -.05], [.33, -.02]]); g.fill();
+        g.fillStyle = '#fff'; E(.26, -.09, .025, .025); g.fill();
+        g.fillStyle = o.c; P([[-.08, -.05], [.04, -.05], [-.12, -.32]]); g.fill(); outline(g, lw*.7);
+        break;
+      }
+      case 'flower': {
+        g.strokeStyle = '#2E7D32'; g.lineWidth = lw*1.3; g.beginPath(); g.moveTo(0, -.05*s); g.lineTo(0, .4*s); g.stroke();
+        g.fillStyle = '#43A047'; E(.08, .2, .08, .035); g.fill();
+        g.fillStyle = o.c;
+        for (let k = 0; k < 5; k++){ const a = k*Math.PI*2/5 - Math.PI/2; E(Math.cos(a)*.11, -.18 + Math.sin(a)*.11, .085, .085); g.fill(); outline(g, lw*.6); }
+        g.fillStyle = '#FDD835'; E(0, -.18, .07, .07); g.fill(); outline(g, lw*.6);
+        break;
+      }
+      case 'butterfly': {
+        g.fillStyle = o.c;
+        for (const sx of [-1, 1]){ E(sx*.15, -.08, .14, .13); g.fill(); outline(g, lw*.6); E(sx*.12, .1, .1, .09); g.fill(); outline(g, lw*.6); }
+        g.fillStyle = INK; E(0, 0, .03, .17); g.fill();
+        break;
+      }
+      case 'boat': {
+        g.fillStyle = o.c; P([[-.6, .2], [.6, .2], [.42, .45], [-.42, .45]]); g.fill(); outline(g, lw);
+        g.strokeStyle = INK; g.lineWidth = lw; g.beginPath(); g.moveTo(0, .2*s); g.lineTo(0, -.48*s); g.stroke();
+        g.fillStyle = o.c2; P([[.03, -.45], [.03, .12], [.45, .12]]); g.fill(); outline(g, lw*.8);
+        break;
+      }
+      case 'fish': {
+        g.fillStyle = o.c; E(0, 0, .3, .2); g.fill(); outline(g, lw*.8);
+        P([[-.26, 0], [-.45, -.17], [-.45, .17]]); g.fill(); outline(g, lw*.8);
+        g.fillStyle = '#fff'; E(.15, -.05, .045, .045); g.fill(); g.fillStyle = INK; E(.16, -.05, .02, .02); g.fill();
+        break;
+      }
+      case 'umbrella': {
+        g.strokeStyle = '#8B5A2B'; g.lineWidth = lw*1.2; g.beginPath(); g.moveTo(0, -.3*s); g.lineTo(0, .5*s); g.stroke();
+        for (let k = 0; k < 4; k++){
+          g.fillStyle = k % 2 ? '#FFFFFF' : o.c; g.beginPath(); g.moveTo(0, -.45*s);
+          g.arc(0, -.05*s, .45*s, Math.PI + k*Math.PI/4, Math.PI + (k + 1)*Math.PI/4); g.closePath(); g.fill(); outline(g, lw*.7);
+        }
+        break;
+      }
+      case 'star': case 'starfish': {
+        g.fillStyle = o.t === 'star' ? '#FFE66D' : o.c; g.beginPath();
+        for (let k = 0; k < 10; k++){ const a = -Math.PI/2 + k*Math.PI/5, r = (k % 2 ? .18 : .42)*s; k ? g.lineTo(Math.cos(a)*r, Math.sin(a)*r) : g.moveTo(Math.cos(a)*r, Math.sin(a)*r); }
+        g.closePath(); g.fill(); if (o.t === 'starfish') outline(g, lw*.7);
+        break;
+      }
+      case 'balloon': {
+        g.strokeStyle = INK; g.lineWidth = lw*.5; g.beginPath(); g.moveTo(0, .02*s); g.quadraticCurveTo(.08*s, .3*s, 0, .55*s); g.stroke();
+        g.fillStyle = o.c; E(0, -.22, .2, .25); g.fill(); outline(g, lw*.7);
+        g.fillStyle = 'rgba(255,255,255,.55)'; E(-.07, -.3, .05, .08); g.fill();
+        break;
+      }
+      case 'mushroom': {
+        g.fillStyle = '#F5EBD6'; g.beginPath(); g.rect(-.09*s, -.02*s, .18*s, .25*s); g.fill(); outline(g, lw*.7);
+        g.fillStyle = o.c; g.beginPath(); g.arc(0, 0, .27*s, Math.PI, 0); g.closePath(); g.fill(); outline(g, lw*.7);
+        g.fillStyle = '#fff'; for (const [x, y] of [[-.12, -.1], [.08, -.15], [.15, -.04]]){ E(x, y, .04, .04); g.fill(); }
+        break;
+      }
+      case 'chicken': {
+        g.fillStyle = o.c; E(-.05, .05, .27, .2); g.fill(); outline(g, lw*.8);
+        E(.2, -.15, .12, .12); g.fill(); outline(g, lw*.8);
+        g.fillStyle = '#E53935'; E(.2, -.29, .05, .04); g.fill();
+        g.fillStyle = '#FB8C00'; P([[.31, -.16], [.4, -.12], [.31, -.09]]); g.fill();
+        g.fillStyle = INK; E(.23, -.17, .02, .02); g.fill();
+        g.strokeStyle = '#FB8C00'; g.lineWidth = lw; g.beginPath(); g.moveTo(-.08*s, .24*s); g.lineTo(-.08*s, .32*s); g.moveTo(.04*s, .24*s); g.lineTo(.04*s, .32*s); g.stroke();
+        break;
+      }
+      case 'fence': {
+        const n = o.n || 5, w = 1.4/n;
+        g.fillStyle = o.c;
+        g.beginPath(); g.rect(-.7*s, -.08*s, 1.4*s, .06*s); g.rect(-.7*s, .08*s, 1.4*s, .06*s); g.fill(); outline(g, lw*.6);
+        for (let k = 0; k < n; k++){ const x = -.7 + w*k + w*.2; P([[x, .22], [x, -.12], [x + w*.3, -.2], [x + w*.6, -.12], [x + w*.6, .22]]); g.fill(); outline(g, lw*.6); }
+        break;
+      }
+      case 'kite': {
+        g.strokeStyle = INK; g.lineWidth = lw*.5; g.beginPath(); g.moveTo(0, .25*s); g.quadraticCurveTo(-.15*s, .4*s, .05*s, .6*s); g.stroke();
+        g.fillStyle = o.c; P([[0, -.5], [.28, -.1], [0, .25], [-.28, -.1]]); g.fill(); outline(g, lw*.7);
+        g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = lw*.5; g.beginPath(); g.moveTo(0, -.5*s); g.lineTo(0, .25*s); g.moveTo(-.28*s, -.1*s); g.lineTo(.28*s, -.1*s); g.stroke();
+        break;
+      }
+      case 'bench': {
+        g.fillStyle = '#A0522D';
+        for (const y of [-.18, -.04, .1]){ g.beginPath(); g.rect(-.48*s, y*s, .96*s, .09*s); g.fill(); outline(g, lw*.6); }
+        g.fillStyle = '#5D4037'; for (const x of [-.4, .34]){ g.beginPath(); g.rect(x*s, .19*s, .06*s, .16*s); g.fill(); }
+        break;
+      }
+    }
+    g.restore();
+  }
+  function renderScene(theme, objs){
+    const T = THEMES[theme], c = document.createElement('canvas'); c.width = AW; c.height = AH;
+    const g = c.getContext('2d');
+    const gr = g.createLinearGradient(0, 0, 0, AH*.6); gr.addColorStop(0, T.sky[0]); gr.addColorStop(1, T.sky[1]);
+    g.fillStyle = gr; g.fillRect(0, 0, AW, AH);
+    if (T.hills){ g.fillStyle = T.hills; for (const [x, r] of [[250, 330], [800, 420], [1300, 300]]){ g.beginPath(); g.ellipse(x, AH*T.bands[0][0] + 20, r, r*.42, 0, Math.PI, 0); g.fill(); } }
+    for (const [y, col] of T.bands){ g.fillStyle = col; g.fillRect(0, AH*y, AW, AH); }
+    // 하늘 물건 → 땅 물건 (아래 있는 것이 앞에)
+    const sky = ['sun', 'moon', 'star', 'cloud', 'bird', 'kite', 'balloon'];
+    const list = objs.slice().sort((a, b) => (sky.includes(b.t) - sky.includes(a.t)) || (a.y + objBox(a)[1]/2) - (b.y + objBox(b)[1]/2));
+    for (const o of list){ if (theme === 'night' && o.t === 'house') o.night = 1; drawObj(g, o); }
+    return c;
+  }
+  // ---------- 선 그림 숨은그림 ----------
+  // 그림책처럼 검은 선으로 장면을 그리고, 잔선(풀잎·물결·모래·나뭇결·잎맥)을 많이 넣어 숨길 자리를 만든다
+  function lineScene(){
+    const sc = makeScene(), c = renderScene(sc.theme, sc.objs);
+    texture(c.getContext('2d'), sc.theme, sc.objs);
+    return c;
+  }
+  function texture(g, theme, objs){
+    const T = THEMES[theme], r = Math.random, top = AH*T.bands[0][0];
+    const occupied = (x, y) => objs.some(o => { const [w, h] = objBox(o); return !o.hide && Math.abs(x - o.x) < w/2 && Math.abs(y - o.y) < h/2; });
+    g.save(); g.lineCap = 'round'; g.lineJoin = 'round';
+    // 땅: 풀잎 · 모래 알갱이 · 물결
+    for (let i = 0; i < 900; i++){
+      const x = r()*AW, y = top + 10 + r()*(AH - top - 14);
+      if (occupied(x, y)) continue;
+      const band = T.bands.filter(b => AH*b[0] <= y).pop(), col = band ? band[1] : '';
+      g.globalAlpha = .45 + r()*.3; g.lineWidth = 2 + r()*1.2; g.strokeStyle = INK;
+      g.beginPath();
+      if (/F3D9A4/i.test(col)) g.arc(x, y, 2 + r()*4, 0, Math.PI*2);
+      else if (/2E86C1|3FA0D8/i.test(col)){ const w = 18 + r()*22; g.strokeStyle = '#E8F6FF'; g.moveTo(x - w, y); g.quadraticCurveTo(x - w/2, y - 8, x, y); g.quadraticCurveTo(x + w/2, y + 8, x + w, y); }
+      else { const h = 10 + r()*12; g.moveTo(x - 5, y - h); g.quadraticCurveTo(x - 1, y - h/3, x, y); g.quadraticCurveTo(x + 2, y - h/2, x + 7, y - h*.9); }
+      g.stroke();
+    }
+    // 하늘: 밤이면 반짝이, 낮이면 바람 결
+    for (let i = 0; i < (theme === 'night' ? 70 : 26); i++){
+      const x = r()*AW, y = r()*top*.95;
+      if (occupied(x, y)) continue;
+      g.globalAlpha = theme === 'night' ? .7 : .35; g.lineWidth = 2.2;
+      g.strokeStyle = theme === 'night' ? '#FFF3B0' : '#FFFFFF';
+      g.beginPath();
+      if (theme === 'night'){ g.moveTo(x - 5, y); g.lineTo(x + 5, y); g.moveTo(x, y - 5); g.lineTo(x, y + 5); }
+      else { const w = 40 + r()*60; g.moveTo(x, y); g.bezierCurveTo(x + w*.3, y - 10, x + w*.6, y + 10, x + w, y); }
+      g.stroke();
+    }
+    // 물건 위 잔선: 나무 잎맥 · 지붕 비늘 · 벽 나뭇결 · 구름 소용돌이
+    g.strokeStyle = INK;
+    for (const o of objs){
+      if (o.hide) continue;
+      const s = o.s; g.globalAlpha = .55; g.lineWidth = Math.max(1.8, s*.012);
+      g.save(); g.translate(o.x, o.y); if (o.f) g.scale(-1, 1);
+      if (o.t === 'tree') for (let k = 0; k < 16; k++){ const a = r()*Math.PI*2, d = r()*.28*s; g.beginPath(); g.arc(Math.cos(a)*d, -.08*s + Math.sin(a)*d*.8, s*(.03 + r()*.03), Math.PI*(.1 + r()), Math.PI*(1 + r())); g.stroke(); }
+      else if (o.t === 'pine') for (let k = 0; k < 12; k++){ const y = (-.3 + r()*.65)*s, x = (r() - .5)*.25*s; g.beginPath(); g.moveTo(x - .04*s, y); g.lineTo(x, y + .04*s); g.lineTo(x + .04*s, y); g.stroke(); }
+      else if (o.t === 'house' || o.t === 'barn'){
+        for (let k = 1; k < 6; k++){ const y = (-.1 + k*.1)*s; g.beginPath(); g.moveTo(-.38*s, y); g.lineTo(.38*s, y); g.stroke(); }
+        for (let k = 0; k < 5; k++){ const y = (-.42 + k*.07)*s, w = (.1 + k*.08)*s; g.beginPath(); g.moveTo(-w, y); g.quadraticCurveTo(0, y + .03*s, w, y); g.stroke(); }
+      }
+      else if (o.t === 'cloud') for (let k = 0; k < 3; k++){ g.beginPath(); g.arc((-.3 + k*.3)*s, 0, .08*s, Math.PI*.2, Math.PI*1.4); g.stroke(); }
+      else if (o.t === 'fence' || o.t === 'bench') for (let k = 0; k < 4; k++){ const y = (-.1 + k*.07)*s; g.beginPath(); g.moveTo(-.6*s, y); g.bezierCurveTo(-.2*s, y + 4, .2*s, y - 4, .6*s, y); g.stroke(); }
+      else if (o.t === 'umbrella' || o.t === 'boat') for (let k = 0; k < 3; k++){ g.beginPath(); g.arc((-.2 + k*.2)*s, .05*s, .05*s, 0, Math.PI); g.stroke(); }
+      g.restore();
+    }
+    g.restore();
+  }
+  // 숨길 물건을 장면과 같은 검은 선으로 그린다 — 쉬울수록 선이 굵고, 안쪽을 그 자리 바탕색으로 덮어 모양이 드러난다
+  function paintLine(base, objs, level){
+    const c = document.createElement('canvas'); c.width = base.width; c.height = base.height;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.drawImage(base, 0, 0);
+    const lw = level === 1 ? 4.4 : level === 2 ? 3.3 : 2.7, fillA = level === 1 ? .8 : level === 2 ? .35 : 0;
+    for (const o of objs){
+      const k = o.s/100, half = Math.max(1, Math.round(o.s/2));
+      const x0 = Math.max(0, Math.min(c.width - half, Math.round(o.x - o.s/4))), y0 = Math.max(0, Math.min(c.height - half, Math.round(o.y - o.s/4)));
+      const px = g.getImageData(x0, y0, half, half).data;
+      let rr = 0, gg = 0, bb = 0, n = 0;
+      for (let i = 0; i < px.length; i += 4){ if (px[i] + px[i+1] + px[i+2] < 200) continue; rr += px[i]; gg += px[i+1]; bb += px[i+2]; n++; } // 검은 잔선은 빼고 바탕색만
+      g.save(); g.translate(o.x, o.y); g.rotate(o.r); g.scale(k, k); g.translate(-50, -50);
+      if (fillA && n){ g.fillStyle = `rgba(${rr/n|0},${gg/n|0},${bb/n|0},${fillA})`; g.fill(PATHS[o.t], 'evenodd'); }
+      g.lineJoin = 'round'; g.lineCap = 'round'; g.lineWidth = lw/k; g.strokeStyle = INK; g.globalAlpha = .9; g.stroke(PATHS[o.t]);
+      g.restore();
+    }
+    return c;
+  }
+  function newArt(lv){ newGame(lineScene(), lv, false, null, true); }
+
   // ---------- game state ----------
-  function build(base, level, sample, dataURL, saved){
+  function build(base, level, sample, dataURL, saved, art){
     const objs = saved ? saved.objs : hide(base, level);
-    G = { base, sample, dataURL, level, objs, scene: paint(base, objs, LEVELS[level]),
+    // art: 동화 그림이면 물건을 장면과 같은 검은 선으로, 사진이면 사진 무늬로 숨긴다
+    G = { base, sample, dataURL, level, objs, art: !!art, scene: art ? paintLine(base, objs, level) : paint(base, objs, LEVELS[level]),
           elapsed: saved ? saved.el || 0 : 0, done: !!(saved && saved.done), started: false };
     fx = [];
     buildList();
@@ -297,11 +618,11 @@
     syncUI();
     save();
   }
-  function newGame(img, level, sample, dataURL){
+  function newGame(img, level, sample, dataURL, art){
     if (!sample && !dataURL){
       try { dataURL = img.toDataURL('image/jpeg', .85); } catch(e){ dataURL = null; }
     }
-    build(img, level, sample, dataURL, null);
+    build(img, level, sample, dataURL, null, art);
     $('#menu').hidden = true;
   }
   const level = () => { const b = $('#level [aria-pressed="true"]'); return b ? +b.dataset.v : 1; };
@@ -319,7 +640,7 @@
   function openDone(){
     if (!G || !G.done || showDone) return;
     showDone = true; syncUI();
-    if (album.length) startAuto();
+    if (album.length || G.art) startAuto();
   }
 
   // ---------- side list ----------
@@ -519,7 +840,7 @@
   function save(){
     if (!G || (!G.sample && !G.dataURL)) return;
     const st = {
-      v: 1, sample: G.sample, img: G.sample ? null : G.dataURL, level: G.level,
+      v: 1, sample: G.sample, img: G.sample ? null : G.dataURL, level: G.level, art: G.art,
       objs: G.objs.map(({ t, x, y, s, r, f }) => ({ t, x, y, s, r, f })),
       el: Math.round(G.elapsed), done: G.done
     };
@@ -530,20 +851,24 @@
   }
   function boot(){
     layout();
+    mode = store.get(MODE) === 'photo' ? 'photo' : 'art';
+    for (const b of $('#mode').querySelectorAll('[data-v]')) toggle(b, b.dataset.v === mode);
     loadAlbum();
     let st = null;
     try { st = JSON.parse(store.get(KEY) || 'null'); } catch(e){}
     const ok = st && st.v === 1 && LEVELS[st.level] && Array.isArray(st.objs) && st.objs.length && st.objs.every(o => SHAPES[o.t]);
     if (ok) syncLevel(st.level);
+    // 하던 판이 지금 고른 방식(동화 그림/내 사진)과 다르면 새로 시작
+    if (ok && !!st.art !== (mode === 'art')){ if (mode === 'art') newArt(level()); else newGame(sampleImage(), level(), true); return; }
     if (ok && st.sample){ build(sampleImage(), st.level, true, null, st); return; }
     if (ok && st.img){
       const im = new Image();
-      im.onload = () => build(fit(im, 1800), st.level, false, st.img, st);
-      im.onerror = () => newGame(sampleImage(), level(), true);
+      im.onload = () => build(fit(im, 1800), st.level, false, st.img, st, st.art);
+      im.onerror = () => mode === 'art' ? newArt(level()) : newGame(sampleImage(), level(), true);
       im.src = st.img;
       return;
     }
-    newGame(sampleImage(), level(), true);
+    if (mode === 'art') newArt(level()); else newGame(sampleImage(), level(), true);
   }
 
   // ---------- images ----------
@@ -659,8 +984,16 @@
     const n = album.length;
     $('#album').hidden = !n;
     $('#albumN').textContent = n;
-    $('#doneNext').hidden = !n;
-    $('#doneAgain').hidden = !!n; // 사진 묶음이면 「다른 사진으로」·「그림 보기」만
+    // 동화 그림이면 늘 「다른 그림으로」, 사진은 묶음이 있을 때만 「다른 사진으로」 (그때는 「그림 보기」와 둘만)
+    const nextOn = mode === 'art' || !!n;
+    $('#doneNext').hidden = !nextOn;
+    $('#doneAgain').hidden = nextOn;
+  }
+  // 무엇으로 할지: 'art' 동화 그림(기본) / 'photo' 내 사진
+  function setMode(m){
+    mode = m; store.set(MODE, m);
+    for (const b of $('#mode').querySelectorAll('[data-v]')) b.setAttribute('aria-pressed', b.dataset.v === m ? 'true' : 'false');
+    syncAlbum(); stopAuto();
   }
 
   async function useAlbum(list){
@@ -711,6 +1044,7 @@
   let nexting = false;
   async function nextPhoto(){
     stopAuto();
+    if (mode === 'art'){ $('#done').hidden = true; newArt(level()); return; }
     if (!album.length || nexting) return;
     nexting = true;
     try {
@@ -739,10 +1073,11 @@
 
   // after a finish, move on to another photo by itself unless the player stops it
   let autoT = 0, autoN = 0;
-  function stopAuto(){ clearInterval(autoT); autoT = 0; $('#doneNext').textContent = '다른 사진으로'; }
+  const nextLabel = () => mode === 'art' ? '다른 그림으로' : '다른 사진으로';
+  function stopAuto(){ clearInterval(autoT); autoT = 0; $('#doneNext').textContent = nextLabel(); }
   function startAuto(){
     stopAuto(); autoN = AUTO_SEC;
-    const b = $('#doneNext'), show = () => { b.textContent = `다른 사진으로 (${autoN})`; };
+    const b = $('#doneNext'), show = () => { b.textContent = `${nextLabel()} (${autoN})`; };
     show();
     autoT = setInterval(() => { if (document.hidden) return; if (--autoN <= 0) nextPhoto(); else show(); }, 1000);
   }
@@ -777,14 +1112,22 @@
     e.target.value = '';
     if (!f) return;
     const url = URL.createObjectURL(f), im = new Image();
-    im.onload = () => { URL.revokeObjectURL(url); saveWarned = false; newGame(landscape(fit(im, 1800)), level(), false); };
+    im.onload = () => { URL.revokeObjectURL(url); saveWarned = false; setMode('photo'); newGame(landscape(fit(im, 1800)), level(), false); };
     im.onerror = () => { URL.revokeObjectURL(url); toast('이 파일은 열 수 없어요. 사진(JPG·PNG) 파일을 골라 주세요.'); };
     im.src = url;
   });
   $('#dir').addEventListener('change', e => {
     const fs = e.target.files ? [...e.target.files] : [];
     e.target.value = '';
-    if (fs.length) useAlbum(fs);
+    if (fs.length){ setMode('photo'); useAlbum(fs); }
+  });
+  $('#mode').addEventListener('click', e => {
+    const b = e.target.closest('[data-v]');
+    if (!b || b.dataset.v === mode) return;
+    setMode(b.dataset.v);
+    if (mode === 'art') newArt(level());
+    else if (album.length) nextPhoto();
+    else { newGame(sampleImage(), level(), true); toast('「사진 한 장 고르기」나 「폴더 고르기」로 사진을 넣어 주세요.'); }
   });
   // folder picking doesn't work on iPhone/iPad; there the same button picks several photos instead
   const iOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -809,7 +1152,7 @@
     const b = e.target.closest('[data-v]');
     if (!b || !G || +b.dataset.v === G.level) return;
     syncLevel(+b.dataset.v);
-    newGame(G.base, +b.dataset.v, G.sample, G.dataURL);
+    newGame(G.base, +b.dataset.v, G.sample, G.dataURL, G.art);
   });
   $('#sound').addEventListener('click', e => { soundOn = !soundOn; toggle(e.currentTarget, soundOn); if (soundOn){ wakeAudio(); beep(660, .08); } });
   const again = $('#again');
@@ -823,9 +1166,9 @@
       return;
     }
     clearTimeout(armT); disarm();
-    newGame(G.base, G.level, G.sample, G.dataURL);
+    newGame(G.base, G.level, G.sample, G.dataURL, G.art);
   });
-  $('#doneAgain').addEventListener('click', () => { stopAuto(); newGame(G.base, G.level, G.sample, G.dataURL); });
+  $('#doneAgain').addEventListener('click', () => { stopAuto(); newGame(G.base, G.level, G.sample, G.dataURL, G.art); });
   $('#gear').addEventListener('click', () => { stopAuto(); syncStats(); $('#menu').hidden = false; });
   $('#menuClose').addEventListener('click', () => { $('#menu').hidden = true; });
   const fullBtn = $('#full');
